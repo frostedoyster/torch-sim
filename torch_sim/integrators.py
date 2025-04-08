@@ -131,6 +131,7 @@ def batched_initialize_momenta(
 def calculate_momenta(
     positions: torch.Tensor,
     masses: torch.Tensor,
+    batch: torch.Tensor,
     kT: torch.Tensor,
     seed: int | None = None,
 ) -> torch.Tensor:
@@ -155,6 +156,10 @@ def calculate_momenta(
     generator = torch.Generator(device=device)
     if seed is not None:
         generator.manual_seed(seed)
+
+    if len(kT.shape) > 0:
+        # kT is a tensor with shape (n_batches,)
+        kT = kT[batch]
 
     # Generate random momenta from normal distribution
     momenta = torch.randn(
@@ -287,7 +292,7 @@ def nve(
         model_output = model(state)
 
         momenta = getattr(
-            state, "momenta", calculate_momenta(state.positions, state.masses, kT, seed)
+            state, "momenta", calculate_momenta(state.positions, state.masses, state.batch, kT, seed)
         )
 
         initial_state = MDState(
@@ -431,7 +436,12 @@ def nvt_langevin(
               where c1 = exp(-gamma*dt) and c2 = sqrt(kT*(1-c1²))
         """
         c1 = torch.exp(-gamma * dt)
-        c2 = torch.sqrt(kT * (1 - c1**2))
+
+        if len(kT.shape) > 0:
+            # kT is a tensor with shape (n_batches,)
+            kT = kT[state.batch]
+
+        c2 = torch.sqrt(kT * (1 - c1**2)).unsqueeze(-1)
 
         # Generate random noise from normal distribution
         noise = torch.randn_like(state.momenta, device=state.device, dtype=state.dtype)
@@ -474,7 +484,7 @@ def nvt_langevin(
         model_output = model(state)
 
         momenta = getattr(
-            state, "momenta", calculate_momenta(state.positions, state.masses, kT, seed)
+            state, "momenta", calculate_momenta(state.positions, state.masses, state.batch, kT, seed)
         )
 
         initial_state = MDState(
@@ -1127,7 +1137,7 @@ def npt_langevin(  # noqa: C901, PLR0915
 
         # Initialize momenta if not provided
         momenta = getattr(
-            state, "momenta", calculate_momenta(state.positions, state.masses, kT, seed)
+            state, "momenta", calculate_momenta(state.positions, state.masses, state.batch, kT, seed)
         )
 
         # Initialize cell parameters

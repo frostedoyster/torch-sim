@@ -233,11 +233,56 @@ def test_npt_langevin(ar_double_sim_state: SimState, lj_model: LennardJonesModel
     assert pos_diff > 0.0001  # Systems should remain separated
 
 
+
+def test_npt_langevin_multi_kt(ar_double_sim_state: SimState, lj_model: LennardJonesModel):
+    dtype = torch.float64
+    n_steps = 200
+    dt = torch.tensor(0.001, dtype=dtype)
+    kT = torch.tensor([300.0, 10000.0], dtype=dtype) * MetalUnits.temperature
+    external_pressure = torch.tensor(0.0, dtype=dtype) * MetalUnits.pressure
+
+    # Initialize integrator
+    init_fn, update_fn = npt_langevin(
+        model=lj_model,
+        dt=dt,
+        kT=kT,
+        external_pressure=external_pressure,
+        alpha=40 * dt,
+    )
+
+    # Run dynamics for several steps
+    state = init_fn(state=ar_double_sim_state, seed=42)
+    energies = []
+    temperatures = []
+    for _step in range(n_steps):
+        state = update_fn(state=state)
+
+        # Calculate instantaneous temperature from kinetic energy
+        temp = calc_kT(state.momenta, state.masses, batch=state.batch)
+        energies.append(state.energy)
+        temperatures.append(temp / MetalUnits.temperature)
+
+    # Convert temperatures list to tensor
+    temperatures_tensor = torch.stack(temperatures)
+    temperatures_list = [t.tolist() for t in temperatures_tensor.T]
+
+    energies_tensor = torch.stack(energies)
+    energies_list = [t.tolist() for t in energies_tensor.T]
+
+    # Basic sanity checks
+    assert len(energies_list[0]) == n_steps
+    assert len(temperatures_list[0]) == n_steps
+
+    # Check temperature is roughly maintained for each trajectory
+    mean_temps = torch.mean(temperatures_tensor, dim=0)  # Mean temp for each trajectory
+    assert torch.allclose(mean_temps, kT / MetalUnits.temperature, rtol=0.5)
+
+
 def test_nvt_langevin(ar_double_sim_state: SimState, lj_model: LennardJonesModel):
     dtype = torch.float64
     n_steps = 100
     dt = torch.tensor(0.001, dtype=dtype)
-    kT = torch.tensor(100.0, dtype=dtype) * MetalUnits.temperature
+    kT = torch.tensor(300, dtype=dtype) * MetalUnits.temperature
 
     # Initialize integrator
     init_fn, update_fn = nvt_langevin(
@@ -273,7 +318,7 @@ def test_nvt_langevin(ar_double_sim_state: SimState, lj_model: LennardJonesModel
     mean_temps = torch.mean(temperatures_tensor, dim=0)  # Mean temp for each trajectory
     for mean_temp in mean_temps:
         assert (
-            abs(mean_temp - kT.item() / MetalUnits.temperature) < 150.0
+            abs(mean_temp - kT.item() / MetalUnits.temperature) < 100.0
         )  # Allow for thermal fluctuations
 
     # Check energy is stable for each trajectory
@@ -289,6 +334,48 @@ def test_nvt_langevin(ar_double_sim_state: SimState, lj_model: LennardJonesModel
         state.positions[:n_atoms].mean(0) - state.positions[n_atoms:].mean(0)
     )
     assert pos_diff > 0.0001  # Systems should remain separated
+
+
+
+def test_nvt_langevin_multi_kt(ar_double_sim_state: SimState, lj_model: LennardJonesModel):
+    dtype = torch.float64
+    n_steps = 200
+    dt = torch.tensor(0.001, dtype=dtype)
+    kT = torch.tensor([300.0, 10000.0], dtype=dtype) * MetalUnits.temperature
+
+    # Initialize integrator
+    init_fn, update_fn = nvt_langevin(
+        model=lj_model,
+        dt=dt,
+        kT=kT,
+    )
+
+    # Run dynamics for several steps
+    state = init_fn(state=ar_double_sim_state, seed=42)
+    energies = []
+    temperatures = []
+    for _step in range(n_steps):
+        state = update_fn(state=state)
+
+        # Calculate instantaneous temperature from kinetic energy
+        temp = calc_kT(state.momenta, state.masses, batch=state.batch)
+        energies.append(state.energy)
+        temperatures.append(temp / MetalUnits.temperature)
+
+    # Convert temperatures list to tensor
+    temperatures_tensor = torch.stack(temperatures)
+    temperatures_list = [t.tolist() for t in temperatures_tensor.T]
+
+    energies_tensor = torch.stack(energies)
+    energies_list = [t.tolist() for t in energies_tensor.T]
+
+    # Basic sanity checks
+    assert len(energies_list[0]) == n_steps
+    assert len(temperatures_list[0]) == n_steps
+
+    # Check temperature is roughly maintained for each trajectory
+    mean_temps = torch.mean(temperatures_tensor, dim=0)  # Mean temp for each trajectory
+    assert torch.allclose(mean_temps, kT / MetalUnits.temperature, rtol=0.5)
 
 
 def test_nve(ar_double_sim_state: SimState, lj_model: LennardJonesModel):
