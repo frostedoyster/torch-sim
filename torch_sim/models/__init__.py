@@ -31,3 +31,8 @@ try:
     from torch_sim.models.mattersim import MatterSimModel
 except ImportError:
     pass
+
+try:
+    from torch_sim.models.metatensor import MetatensorModel
+except ImportError:
+    pass
