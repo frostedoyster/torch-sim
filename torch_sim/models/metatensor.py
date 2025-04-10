@@ -1,6 +1,6 @@
 """Wrapper for metatensor-based models in TorchSim.
 
-This module provides a TorchSim wrapper of the MACE model for computing
+This module provides a TorchSim wrapper of metatensor models for computing
 energies, forces, and stresses for atomistic systems, including batched computations
 for multiple systems simultaneously.
 
@@ -40,6 +40,10 @@ except ImportError:
         It raises an ImportError if metatensor is not installed.
         """
 
+        def __init__(self, *args, **kwargs) -> None:  # noqa: ARG002
+            """Dummy constructor."""
+            raise ImportError("metatensor must be installed to use MetatensorModel.")
+
 
 class MetatensorModel(torch.nn.Module, ModelInterface):
     """Computes energies for a list of systems using a metatensor model.
@@ -57,7 +61,7 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
         self,
         model: str | Path | None = None,
         extensions_path: str | Path | None = None,
-        device: torch.device | None = None,
+        device: torch.device | str | None = None,
         *,
         check_consistency: bool = False,
         neighbor_list_fn: Callable = vesin_nl_ts,
@@ -72,8 +76,9 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
 
         Args:
             model (str | Path | None): Path to the metatensor model file or a
-                pre-defined model name (currently only "pet-mad" is supported as a
-                pre-defined model). If None, defaults to "pet-mad".
+                pre-defined model name. Currently only "pet-mad"
+                (https://arxiv.org/abs/2503.14118) is supported as a pre-defined model.
+                If None, defaults to "pet-mad".
             extensions_path (str | Path | None): Optional, path to the folder containing
                 compiled extensions for the model.
             device (torch.device | None): Device on which to run the model. If None,
@@ -91,7 +96,10 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
         super().__init__()
 
         if model is None:
-            model = "pet-mad"
+            raise ValueError(
+                "A model path, or the name of a pre-defined model, must be provided. "
+                'Currently only "pet-mad" is available as a pre-defined model.'
+            )
 
         if model == "pet-mad":
             path = "https://huggingface.co/lab-cosmo/pet-mad/resolve/main/models/pet-mad-latest.ckpt"
@@ -105,7 +113,22 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
         else:
             raise ValueError('Model must be a path to a .ckpt/.pt file, or "pet-mad".')
 
+        if "energy" not in self._model.capabilities().outputs:
+            raise ValueError(
+                "This model does not support energy predictions. "
+                "The model must have an `energy` output to be used in torch-sim."
+            )
+
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        if isinstance(self._device, str):
+            self._device = torch.device(self._device)
+        if self._device.type not in self._model.capabilities().supported_devices:
+            raise ValueError(
+                f"Model does not support device {self._device}. Supported devices: "
+                f"{self._model.capabilities().supported_devices}. You might want to "
+                f"set the `device` argument to a supported device."
+            )
+
         self._dtype = getattr(torch, self._model.capabilities().dtype)
         self._model.to(self._device)
         self._compute_forces = compute_forces
@@ -206,7 +229,7 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
                 if not neighbor_list_options.full_list:
                     raise ValueError(
                         "Neighbor list options must be full for metatensor models to "
-                        "be used in torchsim."
+                        "be used in torch-sim."
                     )
                 mapping, shifts_idx = self.neighbor_list_fn(
                     positions=system_positions,
@@ -305,7 +328,7 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
                 results["forces"] = torch.empty_like(positions)
         if self._compute_stress:
             if len(results_by_system["stress"]) > 0:
-                results["stress"] = torch.cat(results_by_system["stress"])
+                results["stress"] = torch.stack(results_by_system["stress"])
             else:
                 results["stress"] = torch.empty_like(cell)
 

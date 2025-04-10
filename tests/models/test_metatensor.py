@@ -49,8 +49,8 @@ def test_metatensor_initialization(device: torch.device) -> None:
         model="pet-mad",
         device=device,
     )
-    assert model._device == device  # noqa: SLF001
-    assert model._dtype == torch.float32  # noqa: SLF001
+    assert model.device == device
+    assert model.dtype == torch.float32
 
 
 test_mattersim_consistency = make_model_calculator_consistency_test(
