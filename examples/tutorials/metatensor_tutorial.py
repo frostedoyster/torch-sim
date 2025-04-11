@@ -3,7 +3,7 @@
 #   <summary>Dependencies</summary>
 # /// script
 # dependencies = [
-#     "metatrain>=0.0.30",
+#     "metatrain[pet] >=2025.4",
 #     "metatensor-torch >=0.7,<0.8"
 # ]
 # ///
