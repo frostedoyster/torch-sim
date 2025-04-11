@@ -9,7 +9,7 @@ from tests.models.conftest import (
 
 
 try:
-    from metatensor.torch.atomistic.ase_calculator import MetatensorCalculator
+    from metatensor.torch.atomistic import ase_calculator
     from metatrain.utils.io import load_model
 
     from torch_sim.models.metatensor import MetatensorModel
@@ -26,7 +26,7 @@ def dtype() -> torch.dtype:
 @pytest.fixture
 def metatensor_calculator(device: torch.device):
     """Load a pretrained metatensor model for testing."""
-    return MetatensorCalculator(
+    return ase_calculator.MetatensorCalculator(
         model=load_model(
             "https://huggingface.co/lab-cosmo/pet-mad/resolve/main/models/pet-mad-latest.ckpt"
         ).export(),

@@ -11,18 +11,16 @@ Notes:
     This module depends on the metatensor-torch package.
 """
 
-from collections.abc import Callable
 from pathlib import Path
 
 import torch
+import vesin.torch.metatensor
 
 from torch_sim.models.interface import ModelInterface
-from torch_sim.neighbors import vesin_nl_ts
 from torch_sim.state import SimState, StateDict
 
 
 try:
-    from metatensor.torch import Labels, TensorBlock
     from metatensor.torch.atomistic import (
         ModelEvaluationOptions,
         ModelOutput,
@@ -64,7 +62,6 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
         device: torch.device | str | None = None,
         *,
         check_consistency: bool = False,
-        neighbor_list_fn: Callable = vesin_nl_ts,
         compute_forces: bool = True,
         compute_stress: bool = True,
     ) -> None:
@@ -86,7 +83,6 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
             check_consistency (bool): Whether to perform various consistency checks
                 during model evaluation. This should only be used in case of anomalous
                 behavior, as it can hurt performance significantly.
-            neighbor_list_fn (Callable): Function to compute neighbor lists.
             compute_forces (bool): Whether to compute forces.
             compute_stress (bool): Whether to compute stresses.
 
@@ -133,7 +129,6 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
         self._model.to(self._device)
         self._compute_forces = compute_forces
         self._compute_stress = compute_stress
-        self.neighbor_list_fn = neighbor_list_fn
         self._memory_scales_with = "n_atoms_x_density"  # for the majority of models
         self._check_consistency = check_consistency
         self._requested_neighbor_lists = self._model.requested_neighbor_lists()
@@ -217,63 +212,20 @@ class MetatensorModel(torch.nn.Module, ModelInterface):
                 )
                 system_positions = system_positions @ strain
                 system_cell = system_cell @ strain
-            system = System(
-                positions=system_positions,
-                types=system_atomic_numbers,
-                cell=system_cell,
-                pbc=system_pbc,
+
+            systems.append(
+                System(
+                    positions=system_positions,
+                    types=system_atomic_numbers,
+                    cell=system_cell,
+                    pbc=system_pbc,
+                )
             )
 
-            # Calculate neighbor list(s) for this system
-            for neighbor_list_options in self._requested_neighbor_lists:
-                if not neighbor_list_options.full_list:
-                    raise ValueError(
-                        "Neighbor list options must be full for metatensor models to "
-                        "be used in torch-sim."
-                    )
-                mapping, shifts_idx = self.neighbor_list_fn(
-                    positions=system_positions,
-                    cell=system_cell,
-                    pbc=pbc,
-                    cutoff=torch.tensor(
-                        neighbor_list_options.cutoff,
-                        device=self._device,
-                        dtype=self._dtype,
-                    ),
-                )
-                i, j = mapping
-                interatomic_vectors = (
-                    system_positions[j] - system_positions[i] + shifts_idx @ system_cell
-                )
-                system.add_neighbor_list(
-                    neighbor_list_options,
-                    TensorBlock(
-                        values=interatomic_vectors.unsqueeze(-1),
-                        samples=Labels(
-                            names=[
-                                "first_atom",
-                                "second_atom",
-                                "cell_shift_a",
-                                "cell_shift_b",
-                                "cell_shift_c",
-                            ],
-                            values=torch.cat(
-                                [mapping.T, shifts_idx.to(mapping.dtype)], dim=-1
-                            ),
-                        ),
-                        components=[
-                            Labels(
-                                ["xyz"],
-                                torch.tensor([[0], [1], [2]], device=self._device),
-                            )
-                        ],
-                        properties=Labels(
-                            ["distance"], torch.tensor([[0]], device=self._device)
-                        ),
-                    ),
-                )
-
-            systems.append(system)
+        # Calculate the required neighbor list(s) for all the systems
+        vesin.torch.metatensor.compute_requested_neighbors(
+            systems, system_length_unit="Angstrom", model=self._model
+        )
 
         # Get model output
         model_outputs = self._model(
